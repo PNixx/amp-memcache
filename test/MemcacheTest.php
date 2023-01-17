@@ -87,6 +87,12 @@ class MemcacheTest extends AsyncTestCase {
 		$this->assertFalse($this->memcache->add('test_add', 'test2', 60));
 	}
 
+	public function testReplace() {
+		$this->assertFalse($this->memcache->replace('test_add', 'test2', 60));
+		$this->assertTrue($this->memcache->add('test_add', 'test', 60));
+		$this->assertTrue($this->memcache->replace('test_add', 'test', 60));
+	}
+
 	public function testAsync() {
 		[$errors, $result] = awaitAll([
 			async(fn() => $this->memcache->set('t4', '2', 60)),

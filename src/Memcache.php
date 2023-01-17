@@ -79,10 +79,10 @@ final class Memcache {
 	 * @param string   $key
 	 * @param string   $value
 	 * @param int|null $ttl
-	 * @return bool
+	 * @return bool|null
 	 * @throws MemcacheError
 	 */
-	public function add(string $key, string $value, int $ttl = null): bool {
+	public function add(string $key, string $value, int $ttl = null): ?bool {
 		$key = $this->validateKey($key);
 		$params = ['ms', $key, strlen($value), 'ME'];
 		if( $ttl > 0 ) {
@@ -96,10 +96,10 @@ final class Memcache {
 	 * @param string   $key
 	 * @param string   $value
 	 * @param int|null $ttl
-	 * @return bool
+	 * @return bool|null
 	 * @throws MemcacheError
 	 */
-	public function replace(string $key, string $value, int $ttl = null): bool {
+	public function replace(string $key, string $value, int $ttl = null): ?bool {
 		$key = $this->validateKey($key);
 		$params = ['ms', $key, strlen($value), 'MR'];
 		if( $ttl > 0 ) {
