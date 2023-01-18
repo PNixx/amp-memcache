@@ -67,10 +67,7 @@ final class Memcache {
 	 */
 	public function set(string $key, string $value, int $ttl = null): void {
 		$key = $this->validateKey($key);
-		$params = ['ms', $key, strlen($value)];
-		if( $ttl > 0 ) {
-			$params[] = 'T' . $ttl;
-		}
+		$params = ['set', $key, 0, $ttl ?: 0, strlen($value)];
 		$this->query(new Command(implode(' ', $params), $key, $value));
 	}
 
@@ -84,10 +81,7 @@ final class Memcache {
 	 */
 	public function add(string $key, string $value, int $ttl = null): ?bool {
 		$key = $this->validateKey($key);
-		$params = ['ms', $key, strlen($value), 'ME'];
-		if( $ttl > 0 ) {
-			$params[] = 'T' . $ttl;
-		}
+		$params = ['add', $key, 0, $ttl ?: 0, strlen($value)];
 		return $this->query(new Command(implode(' ', $params), $key, $value));
 	}
 
@@ -101,10 +95,7 @@ final class Memcache {
 	 */
 	public function replace(string $key, string $value, int $ttl = null): ?bool {
 		$key = $this->validateKey($key);
-		$params = ['ms', $key, strlen($value), 'MR'];
-		if( $ttl > 0 ) {
-			$params[] = 'T' . $ttl;
-		}
+		$params = ['replace', $key, 0, $ttl ?: 0, strlen($value)];
 		return $this->query(new Command(implode(' ', $params), $key, $value));
 	}
 
@@ -155,9 +146,9 @@ final class Memcache {
 	 */
 	public function decrement(string $key, int $offset = 1, int $initial_value = 0, int $ttl = 0): ?int {
 		$key = $this->validateKey($key);
-		$params = ['ma', $key, 'D' . $offset, 'J' . $initial_value, 'MD', 'v'];
+		$params = ['ma', $key, 'N' . $ttl, 'D' . $offset, 'J' . $initial_value, 'MD', 'v'];
 		if( $ttl > 0 ) {
-			$params[] = 'N' . $ttl;
+			$params[] = 'T' . $ttl;
 		}
 		return $this->query(new Command(implode(' ', $params), $key));
 	}
