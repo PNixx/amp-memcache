@@ -62,7 +62,7 @@ final class Connection {
 			$this->disconnecting = false;
 			$this->loop_readable = EventLoop::onReadable($this->socket->getResource(), $this->read(...));
 		} catch (ConnectException|CancelledException $e) {
-			$this->logger?->info('Memcache connection error: ' . $e->getMessage());
+			$this->logger?->warning('Memcache connection error: ' . $e->getMessage());
 		}
 	}
 
@@ -81,14 +81,18 @@ final class Connection {
 					$this->socket->write($command->buffer());
 					try {
 						return $command->deferred->getFuture()->await(new TimeoutCancellation(self::WAIT));
+					} catch (MemcacheError $e) {
+						$this->logger->error($e->getMessage());
+						$this->socket->close();
+						return null;
 					} catch (CancelledException $e) {
-						$this->logger?->info('Memcache query timeout, reconnect');
+						$this->logger?->warning('Memcache query timeout, reconnect');
 						$this->socket->close();
 						return null;
 					}
 				}
 			} catch (\Throwable $e) {
-				$this->logger?->info('Memcache query error: ' . $e->getMessage());
+				$this->logger?->warning('Memcache query error: ' . $e->getMessage());
 			}
 		} else {
 			$this->logger?->debug('Memcache ' . $this->server . ' not connected');
@@ -123,8 +127,28 @@ final class Connection {
 		$chunk = $this->socket->read();
 		if( $chunk !== null ) {
 			$this->buffer .= $chunk;
-			$this->parseRaw();
+			try {
+				$this->parseRaw();
+			} catch (MemcacheError $e) {
+				if( $this->tasks ) {
+					//При наличии заданий, возвращаем ошибку в поток
+					$this->tasks[0]->deferred->error($e);
+				} else {
+					throw $e;
+				}
+			}
 		}
+	}
+
+	/**
+	 * Отрезаем кусок
+	 * @param int $size
+	 * @return string
+	 */
+	private function cutBuffer(int $size): string {
+		$chunk = substr($this->buffer, 0, $size);
+		$this->buffer = substr($this->buffer, $size + strlen(Memcache::CRLF));
+		return $chunk;
 	}
 
 	/**
@@ -134,12 +158,17 @@ final class Connection {
 		//Повторяем до тех пор, пока есть данные
 		while( $this->buffer && ($size = strpos($this->buffer, Memcache::CRLF)) !== false ) {
 			//Отрезаем кусок
-			$chunk = substr($this->buffer, 0, $size);
-			$this->buffer = substr($this->buffer, $size + strlen(Memcache::CRLF));
+			$chunk = $this->cutBuffer($size);
+			if( !$chunk ) {
+				continue;
+			}
 
 			//Если есть ожидающая часть, дополняем ее
-			if( $this->response !== null && $this->length >= strlen($this->response) ) {
-				$this->parseAnswerValue($chunk);
+			if( $this->response !== null && $this->length > strlen($this->response) ) {
+				$this->response .= $chunk;
+				if( strlen($this->response) > $this->length ) {
+					throw new MemcacheError('Incorrect body, received ' . strlen($this->response) . ' bytes. Buffer: ' . $this->response);
+				}
 				continue;
 			}
 
@@ -152,15 +181,13 @@ final class Connection {
 					$this->response = '';
 					$this->length = $line[3];
 					if( empty($this->tasks) ) {
-						$this->logger?->warning('Incorrect result. No tasks waiting.');
+						throw new MemcacheError('Incorrect result. No tasks waiting.');
 					} elseif( $this->tasks[0]->key != $line[1] ) {
-						$this->logger?->warning('Incorrect result. Wait key `' . $this->tasks[0]->key . '`, but received `' . $line[1] . '`');
+						throw new MemcacheError('Incorrect result. Wait key `' . $this->tasks[0]->key . '`, but received `' . $line[1] . '`');
 					}
 					break;
 				case 'VA':
-					$chunk = substr($this->buffer, 0, $line[1]);
-					$this->buffer = substr($this->buffer, (int)$line[1] + strlen(Memcache::CRLF));
-					$this->answer($chunk);
+					$this->answer($this->cutBuffer($line[1]));
 					break;
 				case 'NOT_STORED':
 				case 'NS':
@@ -193,7 +220,7 @@ final class Connection {
 					$this->answer(true);
 					break;
 				default:
-					throw new MemcacheError('Unknown command: ' . $line[0] . ', tasks: ' . count($this->tasks) . ', line: ' . $chunk . ', buffer: ' . $this->buffer);
+					throw new MemcacheError('Unknown command: ' . $line[0] . ', tasks: ' . count($this->tasks) . ' (' . implode(', ', array_map(fn(Command $v) => $v->query, $this->tasks)) . '), line: ' . $chunk . ', buffer: ' . $this->buffer);
 			}
 		}
 	}
@@ -204,24 +231,5 @@ final class Connection {
 	private function answer(?string $buffer): void {
 		$command = array_shift($this->tasks);
 		$command?->deferred->complete($buffer);
-	}
-
-	/**
-	 * Собирает ответ и ожидает команды завершения
-	 * @param string $chunks
-	 * @throws MemcacheError
-	 */
-	private function parseAnswerValue(string $chunks): void {
-		if( $chunks === 'END' ) {
-			if( strlen($this->response) != $this->length ) {
-				throw new MemcacheError('Incorrect body, received ' . strlen($this->response) . ' bytes. Buffer: ' . $this->response);
-			}
-			$buffer = $this->response;
-			$this->response = null;
-			$this->length = null;
-			$this->answer($buffer);
-		} else {
-			$this->response .= $chunks;
-		}
 	}
 }
