@@ -14,7 +14,7 @@ use function Amp\Socket\connect;
 
 final class Connection {
 
-	const WAIT = 0.2;
+	const WAIT = 1;
 
 	private Socket $socket;
 	private bool $disconnecting = false;
@@ -113,7 +113,9 @@ final class Connection {
 		}
 		//Если были таски, обнуляем
 		foreach( $this->tasks as $command ) {
-			$command->deferred->complete();
+			if( !$command->deferred->isComplete() ) {
+				$command->deferred->complete();
+			}
 		}
 		$this->tasks = [];
 		$this->response = null;
@@ -159,7 +161,7 @@ final class Connection {
 		while( $this->buffer && ($size = strpos($this->buffer, Memcache::CRLF)) !== false ) {
 			//Отрезаем кусок
 			$chunk = $this->cutBuffer($size);
-			if( !$chunk ) {
+			if( $chunk === '' ) {
 				continue;
 			}
 
@@ -168,6 +170,12 @@ final class Connection {
 				$this->response .= $chunk;
 				if( strlen($this->response) > $this->length ) {
 					throw new MemcacheError('Incorrect body, received ' . strlen($this->response) . ' bytes. Buffer: ' . $this->response);
+				}
+				// `ma` command result without `END` line
+				if( $this->tasks && str_starts_with($this->tasks[0]->query, 'ma ') && $this->length == strlen($this->response) ) {
+					$buffer = $this->response;
+					$this->response = null;
+					$this->answer($buffer);
 				}
 				continue;
 			}
@@ -187,7 +195,8 @@ final class Connection {
 					}
 					break;
 				case 'VA':
-					$this->answer($this->cutBuffer($line[1]));
+					$this->response = '';
+					$this->length = $line[1];
 					break;
 				case 'NOT_STORED':
 				case 'NS':
